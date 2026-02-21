@@ -1,0 +1,569 @@
+"use client";
+
+import { useMemo, useState } from "react";
+
+import { createSupabaseBrowserClient } from "@/lib/supabase/client";
+
+const API_BASE_URL = "https://api.almostcrackd.ai";
+const SUPPORTED_CONTENT_TYPES = [
+  "image/jpeg",
+  "image/jpg",
+  "image/png",
+  "image/webp",
+  "image/gif",
+  "image/heic",
+];
+
+type FlavorOption = {
+  id: number;
+  slug: string;
+};
+
+type ImageOption = {
+  id: number;
+  url: string;
+  is_common_use?: boolean | null;
+  created_datetime_utc?: string | null;
+};
+
+type TestClientProps = {
+  flavors: FlavorOption[];
+  images: ImageOption[];
+};
+
+type CaptionResponse = {
+  captions?: string[];
+  data?: { captions?: string[] };
+  result?: { captions?: string[] };
+};
+
+type DebugStep = {
+  step: string;
+  status?: number;
+  detail?: string;
+  imageUrl?: string;
+};
+
+async function getAccessToken() {
+  const supabase = createSupabaseBrowserClient();
+  const { data, error } = await supabase.auth.getSession();
+  if (error || !data.session?.access_token) {
+    throw new Error("No active session. Please sign in again.");
+  }
+  return data.session.access_token;
+}
+
+function getCaptions(payload: CaptionResponse) {
+  return (
+    payload.captions ?? payload.data?.captions ?? payload.result?.captions ?? []
+  );
+}
+
+async function checkPublicUrl(url: string) {
+  try {
+    const head = await fetch(url, { method: "HEAD" });
+    if (head.ok) return true;
+  } catch {
+    // Ignore and try GET as fallback
+  }
+
+  try {
+    const get = await fetch(url, { method: "GET" });
+    return get.ok;
+  } catch {
+    return false;
+  }
+}
+
+export default function TestClient({ flavors, images }: TestClientProps) {
+  const [selectedFlavorId, setSelectedFlavorId] = useState<string>(
+    flavors[0]?.id ? String(flavors[0].id) : "",
+  );
+  const [selectedImageId, setSelectedImageId] = useState<string>(
+    images[0]?.id ? String(images[0].id) : "",
+  );
+  const [file, setFile] = useState<File | null>(null);
+  const [captions, setCaptions] = useState<string[]>([]);
+  const [previewUrl, setPreviewUrl] = useState<string | null>(
+    images[0]?.url ?? null,
+  );
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
+  const [debugSteps, setDebugSteps] = useState<DebugStep[]>([]);
+  const [step4Status, setStep4Status] = useState<number | null>(null);
+  const [step4ResponseText, setStep4ResponseText] = useState<string | null>(null);
+  const [step4ImageId, setStep4ImageId] = useState<string | null>(null);
+  const [pollAttempt, setPollAttempt] = useState<number | null>(null);
+
+  const selectedImage = useMemo(() => {
+    return images.find((image) => String(image.id) === selectedImageId) ?? null;
+  }, [images, selectedImageId]);
+
+  const handleFlavorChange = (value: string) => {
+    setSelectedFlavorId(value);
+  };
+
+  const handleImageChange = (value: string) => {
+    setSelectedImageId(value);
+    const image = images.find((item) => String(item.id) === value);
+    setPreviewUrl(image?.url ?? null);
+    setFile(null);
+  };
+
+  const handleFileChange = (newFile: File | null) => {
+    if (!newFile) {
+      return;
+    }
+    setFile(newFile);
+    setPreviewUrl(URL.createObjectURL(newFile));
+  };
+
+  const handleGenerate = async () => {
+    setError(null);
+    setWarning(null);
+    setDebugSteps([]);
+    setCaptions([]);
+    setStep4Status(null);
+    setStep4ResponseText(null);
+    setStep4ImageId(null);
+    setPollAttempt(null);
+
+    if (!selectedFlavorId) {
+      setError("Please select a humor flavor.");
+      return;
+    }
+
+    if (!file && !selectedImage) {
+      setError("Please select a test image or upload a file.");
+      return;
+    }
+
+    try {
+      setIsLoading(true);
+      const accessToken = await getAccessToken();
+
+      let imageUrlToRegister: string | null = null;
+      let imageId: string | null = null;
+
+      if (file) {
+        if (!SUPPORTED_CONTENT_TYPES.includes(file.type)) {
+          throw new Error(
+            "Unsupported file type. Use JPG, PNG, WebP, GIF, or HEIC.",
+          );
+        }
+
+        const presignResponse = await fetch(
+          `${API_BASE_URL}/pipeline/generate-presigned-url`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${accessToken}`,
+            },
+            body: JSON.stringify({ contentType: file.type }),
+          },
+        );
+
+        if (!presignResponse.ok) {
+          const detail = await presignResponse.text();
+          setDebugSteps((steps) => [
+            ...steps,
+            {
+              step: "Step 1: generate-presigned-url",
+              status: presignResponse.status,
+              detail,
+            },
+          ]);
+          throw new Error("Failed to generate upload URL.");
+        }
+
+        const presignPayload = await presignResponse.json();
+        const presignedUrl = presignPayload.presignedUrl ?? null;
+        const cdnUrl = presignPayload.cdnUrl ?? null;
+
+        if (!presignedUrl || !cdnUrl) {
+          setDebugSteps((steps) => [
+            ...steps,
+            {
+              step: "Step 1: generate-presigned-url",
+              detail: JSON.stringify(presignPayload),
+            },
+          ]);
+          throw new Error("Upload URL not provided by API.");
+        }
+
+        const uploadResponse = await fetch(presignedUrl, {
+          method: "PUT",
+          headers: {
+            "Content-Type": file.type,
+          },
+          body: await file.arrayBuffer(),
+        });
+
+        if (!uploadResponse.ok) {
+          const detail = await uploadResponse.text();
+          setDebugSteps((steps) => [
+            ...steps,
+            {
+              step: "Step 2: upload bytes",
+              status: uploadResponse.status,
+              detail,
+            },
+          ]);
+          throw new Error("Failed to upload image bytes.");
+        }
+
+        imageUrlToRegister = cdnUrl;
+      } else if (selectedImage) {
+        const isReachable = await checkPublicUrl(selectedImage.url);
+        if (!isReachable) {
+          setError(
+            "Selected image URL is not publicly accessible. Upload a file instead.",
+          );
+          return;
+        }
+        imageUrlToRegister = selectedImage.url;
+      } else {
+        throw new Error("Image not available.");
+      }
+
+      const uploadFromUrlResponse = await fetch(
+        `${API_BASE_URL}/pipeline/upload-image-from-url`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({
+            imageUrl: imageUrlToRegister,
+            isCommonUse: false,
+          }),
+        },
+      );
+
+      if (!uploadFromUrlResponse.ok) {
+        const detail = await uploadFromUrlResponse.text();
+        setDebugSteps((steps) => [
+          ...steps,
+          {
+            step: "Step 3: upload-image-from-url",
+            status: uploadFromUrlResponse.status,
+            detail,
+            imageUrl: imageUrlToRegister ?? undefined,
+          },
+        ]);
+        throw new Error("Failed to register uploaded image.");
+      }
+
+      const uploadPayload = await uploadFromUrlResponse.json();
+      imageId = uploadPayload.imageId ?? null;
+
+      if (!imageId) {
+        setDebugSteps((steps) => [
+          ...steps,
+          {
+            step: "Step 3: upload-image-from-url",
+            detail: JSON.stringify(uploadPayload),
+            imageUrl: imageUrlToRegister ?? undefined,
+          },
+        ]);
+        throw new Error("API did not return an image id.");
+      }
+
+      setStep4ImageId(imageId);
+
+      const callGenerateCaptions = async (includeFlavor: boolean) => {
+        return fetch(`${API_BASE_URL}/pipeline/generate-captions`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify(
+            includeFlavor
+              ? { imageId, humorFlavorId: Number(selectedFlavorId) }
+              : { imageId },
+          ),
+        });
+      };
+
+      const parseStep4 = async (response: Response) => {
+        const rawText = await response.text();
+        setStep4Status(response.status);
+        setStep4ResponseText(rawText);
+        if (!response.ok) {
+          return { ok: false, rawText, captions: null };
+        }
+        try {
+          const parsed = rawText ? JSON.parse(rawText) : null;
+          if (Array.isArray(parsed)) {
+            return { ok: true, rawText, captions: parsed as unknown[] };
+          }
+          return { ok: true, rawText, captions: null, nonArray: true };
+        } catch {
+          return { ok: true, rawText, captions: null, nonJson: true };
+        }
+      };
+
+      let captionsResponse = await callGenerateCaptions(true);
+      let parsed = await parseStep4(captionsResponse);
+
+      if (
+        !captionsResponse.ok &&
+        (captionsResponse.status === 400 || captionsResponse.status === 422)
+      ) {
+        setWarning(
+          `Flavor parameter rejected by API, retrying without it. (${parsed.rawText})`,
+        );
+        captionsResponse = await callGenerateCaptions(false);
+        parsed = await parseStep4(captionsResponse);
+      }
+
+      if (!captionsResponse.ok) {
+        setDebugSteps((steps) => [
+          ...steps,
+          {
+            step: "Step 4: generate-captions",
+            status: captionsResponse.status,
+            detail: parsed.rawText,
+          },
+        ]);
+        throw new Error("Failed to generate captions.");
+      }
+
+      const normalizeCaptions = (items: unknown[]) =>
+        items.map((item) => {
+          if (typeof item === "string") return item;
+          if (item && typeof item === "object" && "content" in item) {
+            return String((item as { content?: unknown }).content ?? "");
+          }
+          return JSON.stringify(item);
+        });
+
+      if (parsed.captions && parsed.captions.length > 0) {
+        setCaptions(normalizeCaptions(parsed.captions));
+      } else if (parsed.captions && parsed.captions.length === 0) {
+        let attempt = 1;
+        let foundCaptions: string[] | null = null;
+        while (attempt <= 20) {
+          setPollAttempt(attempt);
+          await new Promise((resolve) => setTimeout(resolve, 1500));
+          const pollResponse = await callGenerateCaptions(false);
+          const pollParsed = await parseStep4(pollResponse);
+
+          if (!pollResponse.ok) {
+            setDebugSteps((steps) => [
+              ...steps,
+              {
+                step: "Step 4: generate-captions (poll)",
+                status: pollResponse.status,
+                detail: pollParsed.rawText,
+              },
+            ]);
+            throw new Error("Failed to generate captions.");
+          }
+
+          if (pollParsed.captions && pollParsed.captions.length > 0) {
+            foundCaptions = normalizeCaptions(pollParsed.captions);
+            setCaptions(foundCaptions);
+            setPollAttempt(null);
+            break;
+          }
+
+          attempt += 1;
+        }
+
+        if (!foundCaptions || foundCaptions.length === 0) {
+          setError("Still processing—try again in a few seconds.");
+        }
+      } else {
+        setError(
+          "Unexpected response from captions API. Check status and raw response below.",
+        );
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Something went wrong.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold text-zinc-900">Test Flavor</h1>
+          <p className="text-sm text-zinc-500">
+            Generate captions from the REST pipeline and review results.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={handleGenerate}
+          disabled={isLoading}
+          className="inline-flex items-center justify-center rounded-lg bg-black px-4 py-2 text-sm font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-70"
+        >
+          {isLoading ? "Generating..." : "Generate captions"}
+        </button>
+      </div>
+
+      {error ? (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {error}
+        </div>
+      ) : null}
+
+      {warning ? (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          {warning}
+        </div>
+      ) : null}
+
+      {pollAttempt !== null ? (
+        <div className="rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-800">
+          Generating captions… (attempt {pollAttempt}/20)
+        </div>
+      ) : null}
+
+      {step4Status !== null || step4ResponseText !== null || step4ImageId ? (
+        <div className="rounded-2xl border border-zinc-200 bg-white p-4 text-sm text-zinc-700">
+          <div className="mb-2 text-sm font-semibold text-zinc-900">
+            Step 4 debug
+          </div>
+          <div className="space-y-2 text-xs text-zinc-600">
+            <div>imageId: {step4ImageId ?? "—"}</div>
+            <div>status: {step4Status ?? "—"}</div>
+            <div>raw response:</div>
+            <pre className="whitespace-pre-wrap rounded-lg border border-zinc-200 bg-zinc-50 p-2 text-xs text-zinc-700">
+              {step4ResponseText ?? "—"}
+            </pre>
+          </div>
+        </div>
+      ) : null}
+
+      {debugSteps.length > 0 ? (
+        <div className="rounded-2xl border border-zinc-200 bg-white p-4 text-sm text-zinc-700">
+          <div className="mb-2 text-sm font-semibold text-zinc-900">
+            Debug details
+          </div>
+          <ul className="space-y-3">
+            {debugSteps.map((step, index) => (
+              <li key={`${step.step}-${index}`} className="rounded-lg border border-zinc-100 bg-zinc-50 p-3">
+                <div className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+                  {step.step}
+                </div>
+                {step.status !== undefined ? (
+                  <div className="text-xs text-zinc-600">Status: {step.status}</div>
+                ) : null}
+                {step.imageUrl ? (
+                  <div className="mt-1 text-xs text-zinc-600">
+                    imageUrl: {step.imageUrl}
+                  </div>
+                ) : null}
+                {step.detail ? (
+                  <pre className="mt-2 whitespace-pre-wrap rounded-lg border border-zinc-200 bg-white p-2 text-xs text-zinc-700">
+                    {step.detail}
+                  </pre>
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
+
+      <div className="grid gap-6 lg:grid-cols-[320px,1fr]">
+        <div className="space-y-4 rounded-2xl border border-zinc-200 bg-white p-5">
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-zinc-700">
+              Humor flavor
+            </label>
+            <select
+              value={selectedFlavorId}
+              onChange={(event) => handleFlavorChange(event.target.value)}
+              className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm text-zinc-900"
+            >
+              <option value="">Select flavor</option>
+              {flavors.map((flavor) => (
+                <option key={flavor.id} value={flavor.id}>
+                  {flavor.slug}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-zinc-700">
+              Test image
+            </label>
+            <select
+              value={selectedImageId}
+              onChange={(event) => handleImageChange(event.target.value)}
+              className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm text-zinc-900"
+            >
+              <option value="">Select image</option>
+              {images.map((image) => (
+                <option key={image.id} value={image.id}>
+                  Image {image.id}
+                </option>
+              ))}
+            </select>
+            <p className="text-xs text-zinc-500">
+              Uses common-use images when available.
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-zinc-700">
+              Upload (optional)
+            </label>
+            <input
+              type="file"
+              accept={SUPPORTED_CONTENT_TYPES.join(",")}
+              onChange={(event) => handleFileChange(event.target.files?.[0] ?? null)}
+              className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm text-zinc-600 file:mr-4 file:rounded-lg file:border-0 file:bg-zinc-100 file:px-3 file:py-2 file:text-sm file:font-medium file:text-zinc-700"
+            />
+          </div>
+        </div>
+
+        <div className="space-y-4">
+          <div className="rounded-2xl border border-zinc-200 bg-white p-5">
+            <div className="text-sm font-medium text-zinc-700">Preview</div>
+            {previewUrl ? (
+              <img
+                src={previewUrl}
+                alt="Preview"
+                className="mt-3 max-h-80 w-full rounded-xl object-contain"
+              />
+            ) : (
+              <div className="mt-3 rounded-xl border border-dashed border-zinc-200 p-8 text-center text-sm text-zinc-500">
+                Select an image to preview.
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-2xl border border-zinc-200 bg-white p-5">
+            <div className="text-sm font-medium text-zinc-700">Captions</div>
+            {captions.length === 0 ? (
+              <div className="mt-3 rounded-xl border border-dashed border-zinc-200 p-6 text-sm text-zinc-500">
+                Captions will appear here after generation.
+              </div>
+            ) : (
+              <ul className="mt-3 space-y-2 text-sm text-zinc-800">
+                {captions.map((caption, index) => (
+                  <li
+                    key={`${caption}-${index}`}
+                    className="rounded-lg border border-zinc-100 bg-zinc-50 px-3 py-2"
+                  >
+                    {caption}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
