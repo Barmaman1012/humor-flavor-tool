@@ -4,6 +4,8 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import AppShell from "../../_components/AppShell";
 import FlavorStepsClient from "./_components/FlavorStepsClient";
 
+export const revalidate = 0;
+
 export default async function FlavorStepsPage({
   params,
 }: {
@@ -26,21 +28,41 @@ export default async function FlavorStepsPage({
     .eq("id", numericId)
     .maybeSingle();
 
+  // Verification checklist:
+  // 1) Add a step via the modal.
+  // 2) Confirm insert succeeds and router.refresh runs.
+  // 3) Steps render here immediately and after refresh.
   const { data: steps, error: stepsError } = await supabase
     .from("humor_flavor_steps")
     .select(
-      "id,humor_flavor_id,order_by,description,system_prompt,user_prompt,temperature,humor_flavor_step_type_id,llm_model_id,llm_input_type_id,llm_output_type_id",
+      "id,humor_flavor_id,order_by,description,llm_system_prompt,llm_user_prompt,llm_temperature,humor_flavor_step_type_id,llm_model_id,llm_input_type_id,llm_output_type_id",
     )
     .eq("humor_flavor_id", flavor?.id ?? -1)
     .order("order_by", { ascending: true });
 
-  const [{ data: stepTypes }, { data: models }, { data: inputTypes }, { data: outputTypes }] =
-    await Promise.all([
-      supabase.from("humor_flavor_step_types").select("id,name").order("name"),
-      supabase.from("llm_models").select("id,name").order("name"),
-      supabase.from("llm_input_types").select("id,name").order("name"),
-      supabase.from("llm_output_types").select("id,name").order("name"),
-    ]);
+  const [
+    { data: stepTypes },
+    { data: models },
+    { data: inputTypes },
+    { data: outputTypes },
+  ] = await Promise.all([
+    supabase
+      .from("humor_flavor_step_types")
+      .select("id,slug,description")
+      .order("slug"),
+    supabase
+      .from("llm_models")
+      .select("id,name,is_temperature_supported")
+      .order("name"),
+    supabase
+      .from("llm_input_types")
+      .select("id,slug,description")
+      .order("slug"),
+    supabase
+      .from("llm_output_types")
+      .select("id,slug,description")
+      .order("slug"),
+  ]);
 
   if (flavorError || !flavor) {
     return (

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 
@@ -53,6 +53,12 @@ type RunRecord = {
   error?: string;
   imageId?: string;
   flavorRejected?: boolean;
+};
+
+type StepCountState = {
+  count: number | null;
+  error: string | null;
+  isLoading: boolean;
 };
 
 async function getAccessToken() {
@@ -113,6 +119,12 @@ export default function TestClient({ flavors, images }: TestClientProps) {
   const [step4ImageId, setStep4ImageId] = useState<string | null>(null);
   const [pollAttempt, setPollAttempt] = useState<number | null>(null);
   const [runs, setRuns] = useState<RunRecord[]>([]);
+  const [stepCount, setStepCount] = useState<StepCountState>({
+    count: null,
+    error: null,
+    isLoading: false,
+  });
+  const [imageAccess, setImageAccess] = useState<Record<string, boolean>>({});
 
   const selectedImages = useMemo(() => {
     return testImages.filter((image) =>
@@ -120,13 +132,78 @@ export default function TestClient({ flavors, images }: TestClientProps) {
     );
   }, [testImages, selectedImageIds]);
 
+  const visibleImages = useMemo(() => {
+    return testImages.filter((image) => image.url.startsWith("http"));
+  }, [testImages]);
+
+  useEffect(() => {
+    let active = true;
+    const checkImages = async () => {
+      if (visibleImages.length === 0) {
+        setImageAccess({});
+        return;
+      }
+      const entries = await Promise.all(
+        visibleImages.map(async (image) => {
+          const ok = await checkPublicUrl(image.url);
+          return [String(image.id), ok] as const;
+        }),
+      );
+      if (!active) return;
+      setImageAccess(Object.fromEntries(entries));
+    };
+    checkImages();
+    return () => {
+      active = false;
+    };
+  }, [visibleImages]);
+
+  useEffect(() => {
+    let active = true;
+    const fetchStepCount = async () => {
+      if (!selectedFlavorId) {
+        setStepCount({ count: null, error: null, isLoading: false });
+        return;
+      }
+
+      setStepCount((prev) => ({ ...prev, isLoading: true, error: null }));
+      const response = await fetch("/app/api/flavors/validate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ flavorId: Number(selectedFlavorId) }),
+      });
+
+      if (!active) return;
+
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null);
+        setStepCount({
+          count: 0,
+          error: payload?.error ?? "Unable to validate flavor steps.",
+          isLoading: false,
+        });
+        return;
+      }
+
+      setStepCount({ count: 1, error: null, isLoading: false });
+    };
+
+    fetchStepCount();
+    return () => {
+      active = false;
+    };
+  }, [selectedFlavorId]);
+
   const handleFlavorChange = (value: string) => {
     setSelectedFlavorId(value);
   };
 
   const toggleImage = (id: number) => {
+    const key = String(id);
+    if (imageAccess[key] === false) {
+      return;
+    }
     setSelectedImageIds((prev) => {
-      const key = String(id);
       if (prev.includes(key)) {
         return prev.filter((item) => item !== key);
       }
@@ -157,6 +234,24 @@ export default function TestClient({ flavors, images }: TestClientProps) {
 
     if (!selectedFlavorId) {
       setError("Please select a humor flavor.");
+      return;
+    }
+
+    if (stepCount.count === 0) {
+      setError("This flavor has no steps. Add steps first.");
+      return;
+    }
+
+    const validateResponse = await fetch("/app/api/flavors/validate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ flavorId: Number(selectedFlavorId) }),
+    });
+    if (!validateResponse.ok) {
+      const payload = await validateResponse.json().catch(() => null);
+      setError(
+        payload?.error ?? "This flavor has no steps. Add steps first.",
+      );
       return;
     }
 
@@ -565,7 +660,7 @@ export default function TestClient({ flavors, images }: TestClientProps) {
         <button
           type="button"
           onClick={handleGenerate}
-          disabled={isLoading}
+          disabled={isLoading || stepCount.count === 0}
           className="inline-flex items-center justify-center rounded-lg bg-black px-4 py-2 text-sm font-medium text-white transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-70"
         >
           {isLoading ? "Generating..." : "Generate captions"}
@@ -581,6 +676,16 @@ export default function TestClient({ flavors, images }: TestClientProps) {
       {warning ? (
         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
           {warning}
+        </div>
+      ) : null}
+
+      {stepCount.count === 0 ? (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          This flavor has no steps. Add steps first.
+        </div>
+      ) : stepCount.error ? (
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {stepCount.error}
         </div>
       ) : null}
 
@@ -660,24 +765,28 @@ export default function TestClient({ flavors, images }: TestClientProps) {
             <label className="text-sm font-medium text-zinc-700">
               Test images
             </label>
-            {testImages.length === 0 ? (
+            {visibleImages.length === 0 ? (
               <div className="rounded-xl border border-dashed border-zinc-200 p-4 text-sm text-zinc-500">
                 No test images found.
               </div>
             ) : (
               <div className="grid grid-cols-2 gap-3">
-                {testImages.map((image) => {
+                {visibleImages.map((image) => {
                   const isSelected = selectedImageIds.includes(String(image.id));
+                  const isAccessible = imageAccess[String(image.id)] !== false;
+                  const baseClass = isSelected
+                    ? "rounded-lg border-2 border-zinc-900 p-2 text-left"
+                    : "rounded-lg border border-zinc-200 p-2 text-left hover:border-zinc-300";
+                  const className = isAccessible
+                    ? baseClass
+                    : `${baseClass} opacity-50 cursor-not-allowed hover:border-zinc-200`;
                   return (
                     <button
                       key={image.id}
                       type="button"
                       onClick={() => toggleImage(image.id)}
-                      className={
-                        isSelected
-                          ? "rounded-lg border-2 border-zinc-900 p-2 text-left"
-                          : "rounded-lg border border-zinc-200 p-2 text-left hover:border-zinc-300"
-                      }
+                      disabled={!isAccessible}
+                      className={className}
                     >
                       <img
                         src={image.url}
@@ -686,7 +795,13 @@ export default function TestClient({ flavors, images }: TestClientProps) {
                       />
                       <div className="mt-2 flex items-center justify-between text-xs text-zinc-600">
                         <span>Image {image.id}</span>
-                        <span>{isSelected ? "Selected" : "Select"}</span>
+                        <span>
+                          {!isAccessible
+                            ? "Not public"
+                            : isSelected
+                              ? "Selected"
+                              : "Select"}
+                        </span>
                       </div>
                     </button>
                   );
