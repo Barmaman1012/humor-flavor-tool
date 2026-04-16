@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
@@ -45,6 +46,7 @@ export default function FlavorStepsClient({
   const [editingStep, setEditingStep] = useState<FlavorStep | null>(null);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [modalVersion, setModalVersion] = useState(0);
 
   const getLabel = (option: OptionItem) =>
     option.slug ?? option.description ?? option.name ?? "—";
@@ -72,11 +74,13 @@ export default function FlavorStepsClient({
 
   const openCreate = () => {
     setEditingStep(null);
+    setModalVersion((value) => value + 1);
     setIsModalOpen(true);
   };
 
   const openEdit = (step: FlavorStep) => {
     setEditingStep(step);
+    setModalVersion((value) => value + 1);
     setIsModalOpen(true);
   };
 
@@ -135,9 +139,9 @@ export default function FlavorStepsClient({
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="space-y-2">
             <div className="text-sm text-zinc-500">
-              <a href="/app/flavors" className="hover:underline">
+              <Link href="/app/flavors" className="hover:underline">
                 Flavors
-              </a>
+              </Link>
               <span className="px-2">/</span>
               <span>{flavor.slug}</span>
             </div>
@@ -148,12 +152,12 @@ export default function FlavorStepsClient({
               <p className="text-sm text-zinc-500">
                 {flavor.description || "No description provided."}
               </p>
-              <a
+              <Link
                 href={`/app/flavors/${flavor.id}/results`}
                 className="mt-2 inline-block text-sm font-medium text-zinc-700 hover:underline"
               >
                 View results
-              </a>
+              </Link>
             </div>
           </div>
         <button
@@ -270,6 +274,7 @@ export default function FlavorStepsClient({
       </div>
 
       <FlavorStepFormModal
+        key={`${editingStep ? `edit-${editingStep.id}` : "create"}-${modalVersion}`}
         open={isModalOpen}
         mode={editingStep ? "edit" : "create"}
         flavorId={flavor.id}

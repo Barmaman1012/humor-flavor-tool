@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
@@ -70,32 +70,22 @@ export default function FlavorFormModal({
   onSuccess,
 }: FlavorFormModalProps) {
   const router = useRouter();
-  const [slug, setSlug] = useState("");
-  const [description, setDescription] = useState("");
+  const [slug, setSlug] = useState(initialFlavor?.slug ?? "");
+  const [description, setDescription] = useState(initialFlavor?.description ?? "");
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
-  const [steps, setSteps] = useState<DraftStep[]>([]);
-
-  useEffect(() => {
-    if (open) {
-      setSlug(initialFlavor?.slug ?? "");
-      setDescription(initialFlavor?.description ?? "");
-      setSteps([
-        {
-          llm_input_type_id: "",
-          llm_output_type_id: "",
-          llm_model_id: "",
-          humor_flavor_step_type_id: "",
-          description: "",
-          system_prompt: "",
-          user_prompt: "",
-          temperature: "",
-        },
-      ]);
-      setError(null);
-      setIsSaving(false);
-    }
-  }, [open, initialFlavor]);
+  const [steps, setSteps] = useState<DraftStep[]>([
+    {
+      llm_input_type_id: "",
+      llm_output_type_id: "",
+      llm_model_id: "",
+      humor_flavor_step_type_id: "",
+      description: "",
+      system_prompt: "",
+      user_prompt: "",
+      temperature: "",
+    },
+  ]);
 
   const title = useMemo(
     () => (mode === "create" ? "New Flavor" : "Edit Flavor"),
@@ -228,8 +218,9 @@ export default function FlavorFormModal({
         .insert(stepPayload);
 
       if (stepsError) {
+        await supabase.from("humor_flavors").delete().eq("id", createdFlavorId);
         setError(
-          `Flavor created, but steps failed to save: ${stepsError.message}. You can retry or add steps on the flavor page.`,
+          `Flavor steps failed to save: ${stepsError.message}. No flavor was created.`,
         );
         setIsSaving(false);
         return;
