@@ -6,19 +6,11 @@ import { useRouter } from "next/navigation";
 
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 
-import FlavorFormModal, { Flavor, FlavorStepOption } from "./FlavorFormModal";
+import FlavorFormModal, { Flavor } from "./FlavorFormModal";
 
 type FlavorsClientProps = {
   flavors: Flavor[];
   loadError: string | null;
-  stepTypes: FlavorStepOption[];
-  models: FlavorStepOption[];
-  inputTypes: FlavorStepOption[];
-  outputTypes: FlavorStepOption[];
-  stepTypesError: string | null;
-  modelsError: string | null;
-  inputTypesError: string | null;
-  outputTypesError: string | null;
 };
 
 function formatDate(value: string) {
@@ -33,18 +25,7 @@ function formatDate(value: string) {
   });
 }
 
-export default function FlavorsClient({
-  flavors,
-  loadError,
-  stepTypes,
-  models,
-  inputTypes,
-  outputTypes,
-  stepTypesError,
-  modelsError,
-  inputTypesError,
-  outputTypesError,
-}: FlavorsClientProps) {
+export default function FlavorsClient({ flavors, loadError }: FlavorsClientProps) {
   const router = useRouter();
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingFlavor, setEditingFlavor] = useState<Flavor | null>(null);
@@ -189,14 +170,6 @@ export default function FlavorsClient({
         open={isModalOpen}
         mode={editingFlavor ? "edit" : "create"}
         initialFlavor={editingFlavor}
-        stepTypes={stepTypes}
-        models={models}
-        inputTypes={inputTypes}
-        outputTypes={outputTypes}
-        stepTypesError={stepTypesError}
-        modelsError={modelsError}
-        inputTypesError={inputTypesError}
-        outputTypesError={outputTypesError}
         onClose={handleClose}
         onSuccess={handleSuccess}
       />

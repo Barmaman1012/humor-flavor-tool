@@ -46,11 +46,8 @@ export default function FlavorStepsClient({
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
-  const getLabel = (option: OptionItem) =>
-    option.slug ?? option.description ?? option.name ?? "—";
-
   const stepTypeMap = useMemo(() => {
-    return new Map(stepTypes.map((type) => [type.id, getLabel(type)]));
+    return new Map(stepTypes.map((type) => [type.id, type.name ?? "—"]));
   }, [stepTypes]);
 
   const modelMap = useMemo(() => {
@@ -58,11 +55,11 @@ export default function FlavorStepsClient({
   }, [models]);
 
   const inputTypeMap = useMemo(() => {
-    return new Map(inputTypes.map((type) => [type.id, getLabel(type)]));
+    return new Map(inputTypes.map((type) => [type.id, type.name ?? "—"]));
   }, [inputTypes]);
 
   const outputTypeMap = useMemo(() => {
-    return new Map(outputTypes.map((type) => [type.id, getLabel(type)]));
+    return new Map(outputTypes.map((type) => [type.id, type.name ?? "—"]));
   }, [outputTypes]);
 
   const nextOrder = useMemo(() => {
@@ -195,7 +192,7 @@ export default function FlavorStepsClient({
                     <span className="px-2">•</span>
                     Model: {modelMap.get(step.llm_model_id ?? -1) ?? "—"}
                     <span className="px-2">•</span>
-                    Temp: {step.llm_temperature ?? "—"}
+                    Temp: {step.temperature ?? "—"}
                   </div>
                   <div className="text-xs text-zinc-500">
                     Input: {inputTypeMap.get(step.llm_input_type_id ?? -1) ?? "—"}
@@ -251,7 +248,7 @@ export default function FlavorStepsClient({
                       System prompt
                     </div>
                     <pre className="whitespace-pre-wrap text-xs text-zinc-700">
-                      {formatPrompt(step.llm_system_prompt)}
+                      {formatPrompt(step.system_prompt)}
                     </pre>
                   </div>
                   <div className="rounded-xl border border-zinc-200 bg-zinc-50 p-4">
@@ -259,7 +256,7 @@ export default function FlavorStepsClient({
                       User prompt
                     </div>
                     <pre className="whitespace-pre-wrap text-xs text-zinc-700">
-                      {formatPrompt(step.llm_user_prompt)}
+                      {formatPrompt(step.user_prompt)}
                     </pre>
                   </div>
                 </div>
