@@ -44,6 +44,17 @@ type DebugStep = {
   imageUrl?: string;
 };
 
+type RunRecord = {
+  id: string;
+  source: "file" | "image";
+  imageUrl: string;
+  status: "pending" | "success" | "error";
+  captions: string[];
+  error?: string;
+  imageId?: string;
+  flavorRejected?: boolean;
+};
+
 async function getAccessToken() {
   const supabase = createSupabaseBrowserClient();
   const { data, error } = await supabase.auth.getSession();
@@ -76,17 +87,23 @@ async function checkPublicUrl(url: string) {
 }
 
 export default function TestClient({ flavors, images }: TestClientProps) {
+  const fallbackImages: ImageOption[] = useMemo(() => {
+    if (images.length > 0) return [];
+    return [
+      { id: 1, url: "https://picsum.photos/seed/humor-1/800/600" },
+      { id: 2, url: "https://picsum.photos/seed/humor-2/800/600" },
+      { id: 3, url: "https://picsum.photos/seed/humor-3/800/600" },
+    ];
+  }, [images.length]);
+  const testImages = images.length > 0 ? images : fallbackImages;
+
   const [selectedFlavorId, setSelectedFlavorId] = useState<string>(
     flavors[0]?.id ? String(flavors[0].id) : "",
   );
-  const [selectedImageId, setSelectedImageId] = useState<string>(
-    images[0]?.id ? String(images[0].id) : "",
-  );
+  const [selectedImageIds, setSelectedImageIds] = useState<string[]>([]);
   const [file, setFile] = useState<File | null>(null);
   const [captions, setCaptions] = useState<string[]>([]);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(
-    images[0]?.url ?? null,
-  );
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
@@ -95,19 +112,26 @@ export default function TestClient({ flavors, images }: TestClientProps) {
   const [step4ResponseText, setStep4ResponseText] = useState<string | null>(null);
   const [step4ImageId, setStep4ImageId] = useState<string | null>(null);
   const [pollAttempt, setPollAttempt] = useState<number | null>(null);
+  const [runs, setRuns] = useState<RunRecord[]>([]);
 
-  const selectedImage = useMemo(() => {
-    return images.find((image) => String(image.id) === selectedImageId) ?? null;
-  }, [images, selectedImageId]);
+  const selectedImages = useMemo(() => {
+    return testImages.filter((image) =>
+      selectedImageIds.includes(String(image.id)),
+    );
+  }, [testImages, selectedImageIds]);
 
   const handleFlavorChange = (value: string) => {
     setSelectedFlavorId(value);
   };
 
-  const handleImageChange = (value: string) => {
-    setSelectedImageId(value);
-    const image = images.find((item) => String(item.id) === value);
-    setPreviewUrl(image?.url ?? null);
+  const toggleImage = (id: number) => {
+    setSelectedImageIds((prev) => {
+      const key = String(id);
+      if (prev.includes(key)) {
+        return prev.filter((item) => item !== key);
+      }
+      return [...prev, key];
+    });
     setFile(null);
   };
 
@@ -117,6 +141,7 @@ export default function TestClient({ flavors, images }: TestClientProps) {
     }
     setFile(newFile);
     setPreviewUrl(URL.createObjectURL(newFile));
+    setSelectedImageIds([]);
   };
 
   const handleGenerate = async () => {
@@ -128,14 +153,15 @@ export default function TestClient({ flavors, images }: TestClientProps) {
     setStep4ResponseText(null);
     setStep4ImageId(null);
     setPollAttempt(null);
+    setRuns([]);
 
     if (!selectedFlavorId) {
       setError("Please select a humor flavor.");
       return;
     }
 
-    if (!file && !selectedImage) {
-      setError("Please select a test image or upload a file.");
+    if (!file && selectedImages.length === 0) {
+      setError("Please select one or more test images, or upload a file.");
       return;
     }
 
@@ -143,11 +169,284 @@ export default function TestClient({ flavors, images }: TestClientProps) {
       setIsLoading(true);
       const accessToken = await getAccessToken();
 
-      let imageUrlToRegister: string | null = null;
-      let imageId: string | null = null;
+      const runForImageUrl = async (imageUrl: string, source: RunRecord["source"]) => {
+        const runId = `${source}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+        setRuns((prev) => [
+          ...prev,
+          {
+            id: runId,
+            source,
+            imageUrl,
+            status: "pending",
+            captions: [],
+          },
+        ]);
 
-      if (file) {
-        if (!SUPPORTED_CONTENT_TYPES.includes(file.type)) {
+        let imageId: string | null = null;
+        let flavorRejected = false;
+
+        const uploadFromUrlResponse = await fetch(
+          `${API_BASE_URL}/pipeline/upload-image-from-url`,
+          {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${accessToken}`,
+            },
+            body: JSON.stringify({
+              imageUrl,
+              isCommonUse: false,
+            }),
+          },
+        );
+
+        if (!uploadFromUrlResponse.ok) {
+          const detail = await uploadFromUrlResponse.text();
+          setDebugSteps((steps) => [
+            ...steps,
+            {
+              step: "Step 3: upload-image-from-url",
+              status: uploadFromUrlResponse.status,
+              detail,
+              imageUrl,
+            },
+          ]);
+          setRuns((prev) =>
+            prev.map((run) =>
+              run.id === runId
+                ? {
+                    ...run,
+                    status: "error",
+                    error: "Failed to register uploaded image.",
+                  }
+                : run,
+            ),
+          );
+          return;
+        }
+
+        const uploadPayload = await uploadFromUrlResponse.json();
+        imageId = uploadPayload.imageId ?? null;
+        if (!imageId) {
+          setDebugSteps((steps) => [
+            ...steps,
+            {
+              step: "Step 3: upload-image-from-url",
+              detail: JSON.stringify(uploadPayload),
+              imageUrl,
+            },
+          ]);
+          setRuns((prev) =>
+            prev.map((run) =>
+              run.id === runId
+                ? {
+                    ...run,
+                    status: "error",
+                    error: "API did not return an image id.",
+                  }
+                : run,
+            ),
+          );
+          return;
+        }
+
+        setStep4ImageId(imageId);
+
+        const callGenerateCaptions = async (includeFlavor: boolean) => {
+          return fetch(`${API_BASE_URL}/pipeline/generate-captions`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${accessToken}`,
+            },
+            body: JSON.stringify(
+              includeFlavor
+                ? { imageId, humorFlavorId: Number(selectedFlavorId) }
+                : { imageId },
+            ),
+          });
+        };
+
+        const parseStep4 = async (response: Response) => {
+          const rawText = await response.text();
+          setStep4Status(response.status);
+          setStep4ResponseText(rawText);
+          if (!response.ok) {
+            return { ok: false, rawText, captions: null };
+          }
+          try {
+            const parsed = rawText ? JSON.parse(rawText) : null;
+            if (Array.isArray(parsed)) {
+              return { ok: true, rawText, captions: parsed as unknown[] };
+            }
+            return { ok: true, rawText, captions: null, nonArray: true };
+          } catch {
+            return { ok: true, rawText, captions: null, nonJson: true };
+          }
+        };
+
+        let captionsResponse = await callGenerateCaptions(true);
+        let parsed = await parseStep4(captionsResponse);
+
+        if (
+          !captionsResponse.ok &&
+          (captionsResponse.status === 400 || captionsResponse.status === 422)
+        ) {
+          flavorRejected = true;
+          setWarning(
+            `Flavor parameter rejected by API, retrying without it. (${parsed.rawText})`,
+          );
+          captionsResponse = await callGenerateCaptions(false);
+          parsed = await parseStep4(captionsResponse);
+        }
+
+        if (!captionsResponse.ok) {
+          setDebugSteps((steps) => [
+            ...steps,
+            {
+              step: "Step 4: generate-captions",
+              status: captionsResponse.status,
+              detail: parsed.rawText,
+            },
+          ]);
+          setRuns((prev) =>
+            prev.map((run) =>
+              run.id === runId
+                ? {
+                    ...run,
+                    status: "error",
+                    error: "Failed to generate captions.",
+                    imageId,
+                    flavorRejected,
+                  }
+                : run,
+            ),
+          );
+          return;
+        }
+
+        const normalizeCaptions = (items: unknown[]) =>
+          items.map((item) => {
+            if (typeof item === "string") return item;
+            if (item && typeof item === "object" && "content" in item) {
+              return String((item as { content?: unknown }).content ?? "");
+            }
+            return JSON.stringify(item);
+          });
+
+        if (parsed.captions && parsed.captions.length > 0) {
+          const normalized = normalizeCaptions(parsed.captions);
+          setCaptions((prev) => [...prev, ...normalized]);
+          setRuns((prev) =>
+            prev.map((run) =>
+              run.id === runId
+                ? {
+                    ...run,
+                    status: "success",
+                    captions: normalized,
+                    imageId,
+                    flavorRejected,
+                  }
+                : run,
+            ),
+          );
+          return;
+        }
+
+        if (parsed.captions && parsed.captions.length === 0) {
+          let attempt = 1;
+          let foundCaptions: string[] | null = null;
+          while (attempt <= 20) {
+            setPollAttempt(attempt);
+            await new Promise((resolve) => setTimeout(resolve, 1500));
+            const pollResponse = await callGenerateCaptions(false);
+            const pollParsed = await parseStep4(pollResponse);
+
+            if (!pollResponse.ok) {
+              setDebugSteps((steps) => [
+                ...steps,
+                {
+                  step: "Step 4: generate-captions (poll)",
+                  status: pollResponse.status,
+                  detail: pollParsed.rawText,
+                },
+              ]);
+              setRuns((prev) =>
+                prev.map((run) =>
+                  run.id === runId
+                    ? {
+                        ...run,
+                        status: "error",
+                        error: "Failed to generate captions.",
+                        imageId,
+                        flavorRejected,
+                      }
+                    : run,
+                ),
+              );
+              return;
+            }
+
+            if (pollParsed.captions && pollParsed.captions.length > 0) {
+              foundCaptions = normalizeCaptions(pollParsed.captions);
+              setCaptions((prev) => [...prev, ...foundCaptions]);
+              setRuns((prev) =>
+                prev.map((run) =>
+                  run.id === runId
+                    ? {
+                        ...run,
+                        status: "success",
+                        captions: foundCaptions ?? [],
+                        imageId,
+                        flavorRejected,
+                      }
+                    : run,
+                ),
+              );
+              setPollAttempt(null);
+              break;
+            }
+
+            attempt += 1;
+          }
+
+          if (!foundCaptions || foundCaptions.length === 0) {
+            setError("Still processing—try again in a few seconds.");
+            setRuns((prev) =>
+              prev.map((run) =>
+                run.id === runId
+                  ? {
+                      ...run,
+                      status: "error",
+                      error: "Still processing—try again in a few seconds.",
+                      imageId,
+                      flavorRejected,
+                    }
+                  : run,
+              ),
+            );
+          }
+          return;
+        }
+
+        setRuns((prev) =>
+          prev.map((run) =>
+            run.id === runId
+              ? {
+                  ...run,
+                  status: "error",
+                  error:
+                    "Unexpected response from captions API. Check status and raw response below.",
+                  imageId,
+                  flavorRejected,
+                }
+              : run,
+          ),
+        );
+      };
+
+      const runWithFile = async (uploadFile: File) => {
+        if (!SUPPORTED_CONTENT_TYPES.includes(uploadFile.type)) {
           throw new Error(
             "Unsupported file type. Use JPG, PNG, WebP, GIF, or HEIC.",
           );
@@ -161,7 +460,7 @@ export default function TestClient({ flavors, images }: TestClientProps) {
               "Content-Type": "application/json",
               Authorization: `Bearer ${accessToken}`,
             },
-            body: JSON.stringify({ contentType: file.type }),
+            body: JSON.stringify({ contentType: uploadFile.type }),
           },
         );
 
@@ -196,9 +495,9 @@ export default function TestClient({ flavors, images }: TestClientProps) {
         const uploadResponse = await fetch(presignedUrl, {
           method: "PUT",
           headers: {
-            "Content-Type": file.type,
+            "Content-Type": uploadFile.type,
           },
-          body: await file.arrayBuffer(),
+          body: await uploadFile.arrayBuffer(),
         });
 
         if (!uploadResponse.ok) {
@@ -214,174 +513,34 @@ export default function TestClient({ flavors, images }: TestClientProps) {
           throw new Error("Failed to upload image bytes.");
         }
 
-        imageUrlToRegister = cdnUrl;
-      } else if (selectedImage) {
-        const isReachable = await checkPublicUrl(selectedImage.url);
-        if (!isReachable) {
-          setError(
-            "Selected image URL is not publicly accessible. Upload a file instead.",
-          );
-          return;
-        }
-        imageUrlToRegister = selectedImage.url;
+        await runForImageUrl(cdnUrl, "file");
+      };
+
+      if (file) {
+        await runWithFile(file);
       } else {
-        throw new Error("Image not available.");
-      }
-
-      const uploadFromUrlResponse = await fetch(
-        `${API_BASE_URL}/pipeline/upload-image-from-url`,
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${accessToken}`,
-          },
-          body: JSON.stringify({
-            imageUrl: imageUrlToRegister,
-            isCommonUse: false,
-          }),
-        },
-      );
-
-      if (!uploadFromUrlResponse.ok) {
-        const detail = await uploadFromUrlResponse.text();
-        setDebugSteps((steps) => [
-          ...steps,
-          {
-            step: "Step 3: upload-image-from-url",
-            status: uploadFromUrlResponse.status,
-            detail,
-            imageUrl: imageUrlToRegister ?? undefined,
-          },
-        ]);
-        throw new Error("Failed to register uploaded image.");
-      }
-
-      const uploadPayload = await uploadFromUrlResponse.json();
-      imageId = uploadPayload.imageId ?? null;
-
-      if (!imageId) {
-        setDebugSteps((steps) => [
-          ...steps,
-          {
-            step: "Step 3: upload-image-from-url",
-            detail: JSON.stringify(uploadPayload),
-            imageUrl: imageUrlToRegister ?? undefined,
-          },
-        ]);
-        throw new Error("API did not return an image id.");
-      }
-
-      setStep4ImageId(imageId);
-
-      const callGenerateCaptions = async (includeFlavor: boolean) => {
-        return fetch(`${API_BASE_URL}/pipeline/generate-captions`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${accessToken}`,
-          },
-          body: JSON.stringify(
-            includeFlavor
-              ? { imageId, humorFlavorId: Number(selectedFlavorId) }
-              : { imageId },
-          ),
-        });
-      };
-
-      const parseStep4 = async (response: Response) => {
-        const rawText = await response.text();
-        setStep4Status(response.status);
-        setStep4ResponseText(rawText);
-        if (!response.ok) {
-          return { ok: false, rawText, captions: null };
-        }
-        try {
-          const parsed = rawText ? JSON.parse(rawText) : null;
-          if (Array.isArray(parsed)) {
-            return { ok: true, rawText, captions: parsed as unknown[] };
-          }
-          return { ok: true, rawText, captions: null, nonArray: true };
-        } catch {
-          return { ok: true, rawText, captions: null, nonJson: true };
-        }
-      };
-
-      let captionsResponse = await callGenerateCaptions(true);
-      let parsed = await parseStep4(captionsResponse);
-
-      if (
-        !captionsResponse.ok &&
-        (captionsResponse.status === 400 || captionsResponse.status === 422)
-      ) {
-        setWarning(
-          `Flavor parameter rejected by API, retrying without it. (${parsed.rawText})`,
-        );
-        captionsResponse = await callGenerateCaptions(false);
-        parsed = await parseStep4(captionsResponse);
-      }
-
-      if (!captionsResponse.ok) {
-        setDebugSteps((steps) => [
-          ...steps,
-          {
-            step: "Step 4: generate-captions",
-            status: captionsResponse.status,
-            detail: parsed.rawText,
-          },
-        ]);
-        throw new Error("Failed to generate captions.");
-      }
-
-      const normalizeCaptions = (items: unknown[]) =>
-        items.map((item) => {
-          if (typeof item === "string") return item;
-          if (item && typeof item === "object" && "content" in item) {
-            return String((item as { content?: unknown }).content ?? "");
-          }
-          return JSON.stringify(item);
-        });
-
-      if (parsed.captions && parsed.captions.length > 0) {
-        setCaptions(normalizeCaptions(parsed.captions));
-      } else if (parsed.captions && parsed.captions.length === 0) {
-        let attempt = 1;
-        let foundCaptions: string[] | null = null;
-        while (attempt <= 20) {
-          setPollAttempt(attempt);
-          await new Promise((resolve) => setTimeout(resolve, 1500));
-          const pollResponse = await callGenerateCaptions(false);
-          const pollParsed = await parseStep4(pollResponse);
-
-          if (!pollResponse.ok) {
-            setDebugSteps((steps) => [
-              ...steps,
+        for (const image of selectedImages) {
+          const isReachable = await checkPublicUrl(image.url);
+          if (!isReachable) {
+            setError(
+              "Selected image URL is not publicly accessible. Upload a file instead.",
+            );
+            setRuns((prev) => [
+              ...prev,
               {
-                step: "Step 4: generate-captions (poll)",
-                status: pollResponse.status,
-                detail: pollParsed.rawText,
+                id: `image-${image.id}-${Date.now()}`,
+                source: "image",
+                imageUrl: image.url,
+                status: "error",
+                captions: [],
+                error:
+                  "Selected image URL is not publicly accessible. Upload a file instead.",
               },
             ]);
-            throw new Error("Failed to generate captions.");
+            continue;
           }
-
-          if (pollParsed.captions && pollParsed.captions.length > 0) {
-            foundCaptions = normalizeCaptions(pollParsed.captions);
-            setCaptions(foundCaptions);
-            setPollAttempt(null);
-            break;
-          }
-
-          attempt += 1;
+          await runForImageUrl(image.url, "image");
         }
-
-        if (!foundCaptions || foundCaptions.length === 0) {
-          setError("Still processing—try again in a few seconds.");
-        }
-      } else {
-        setError(
-          "Unexpected response from captions API. Check status and raw response below.",
-        );
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Something went wrong.");
@@ -389,6 +548,9 @@ export default function TestClient({ flavors, images }: TestClientProps) {
       setIsLoading(false);
     }
   };
+
+  const previewImageUrl =
+    previewUrl ?? (selectedImages.length > 0 ? selectedImages[0].url : null);
 
   return (
     <div className="space-y-6">
@@ -473,7 +635,7 @@ export default function TestClient({ flavors, images }: TestClientProps) {
         </div>
       ) : null}
 
-      <div className="grid gap-6 lg:grid-cols-[320px,1fr]">
+      <div className="grid gap-6 lg:grid-cols-[360px,1fr]">
         <div className="space-y-4 rounded-2xl border border-zinc-200 bg-white p-5">
           <div className="space-y-2">
             <label className="text-sm font-medium text-zinc-700">
@@ -493,25 +655,53 @@ export default function TestClient({ flavors, images }: TestClientProps) {
             </select>
           </div>
 
-          <div className="space-y-2">
+          <div className="space-y-3">
             <label className="text-sm font-medium text-zinc-700">
-              Test image
+              Test images
             </label>
-            <select
-              value={selectedImageId}
-              onChange={(event) => handleImageChange(event.target.value)}
-              className="w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm text-zinc-900"
-            >
-              <option value="">Select image</option>
-              {images.map((image) => (
-                <option key={image.id} value={image.id}>
-                  Image {image.id}
-                </option>
-              ))}
-            </select>
-            <p className="text-xs text-zinc-500">
-              Uses common-use images when available.
-            </p>
+            {testImages.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-zinc-200 p-4 text-sm text-zinc-500">
+                No test images found.
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-3">
+                {testImages.map((image) => {
+                  const isSelected = selectedImageIds.includes(String(image.id));
+                  return (
+                    <button
+                      key={image.id}
+                      type="button"
+                      onClick={() => toggleImage(image.id)}
+                      className={
+                        isSelected
+                          ? "rounded-lg border-2 border-zinc-900 p-2 text-left"
+                          : "rounded-lg border border-zinc-200 p-2 text-left hover:border-zinc-300"
+                      }
+                    >
+                      <img
+                        src={image.url}
+                        alt={`Image ${image.id}`}
+                        className="h-24 w-full rounded-md object-cover"
+                      />
+                      <div className="mt-2 flex items-center justify-between text-xs text-zinc-600">
+                        <span>Image {image.id}</span>
+                        <span>{isSelected ? "Selected" : "Select"}</span>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            {images.length === 0 ? (
+              <p className="text-xs text-amber-700">
+                Using fallback test images because none were found in the
+                database.
+              </p>
+            ) : (
+              <p className="text-xs text-zinc-500">
+                Uses common-use images when available.
+              </p>
+            )}
           </div>
 
           <div className="space-y-2">
@@ -530,9 +720,9 @@ export default function TestClient({ flavors, images }: TestClientProps) {
         <div className="space-y-4">
           <div className="rounded-2xl border border-zinc-200 bg-white p-5">
             <div className="text-sm font-medium text-zinc-700">Preview</div>
-            {previewUrl ? (
+            {previewImageUrl ? (
               <img
-                src={previewUrl}
+                src={previewImageUrl}
                 alt="Preview"
                 className="mt-3 max-h-80 w-full rounded-xl object-contain"
               />
@@ -564,6 +754,82 @@ export default function TestClient({ flavors, images }: TestClientProps) {
           </div>
         </div>
       </div>
+
+      {runs.length > 0 ? (
+        <div className="rounded-2xl border border-zinc-200 bg-white p-5">
+          <div className="text-sm font-medium text-zinc-700">Run history</div>
+          <div className="mt-4 space-y-4">
+            {runs.map((run) => (
+              <div
+                key={run.id}
+                className="rounded-xl border border-zinc-100 bg-zinc-50 p-4 text-sm text-zinc-700"
+              >
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <div className="flex items-center gap-3">
+                    <img
+                      src={run.imageUrl}
+                      alt="Run image"
+                      className="h-16 w-20 rounded-md object-cover"
+                    />
+                    <div>
+                      <div className="text-xs uppercase tracking-wide text-zinc-500">
+                        {run.source === "file" ? "Uploaded file" : "Test image"}
+                      </div>
+                      <div className="text-sm font-semibold text-zinc-900">
+                        {run.status === "pending"
+                          ? "Running"
+                          : run.status === "success"
+                            ? "Completed"
+                            : "Failed"}
+                      </div>
+                      {run.imageId ? (
+                        <div className="text-xs text-zinc-500">
+                          imageId: {run.imageId}
+                        </div>
+                      ) : null}
+                      {run.flavorRejected ? (
+                        <div className="text-xs text-amber-700">
+                          Flavor not passed to API (unsupported)
+                        </div>
+                      ) : null}
+                    </div>
+                  </div>
+                </div>
+                {run.error ? (
+                  <div className="mt-3 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                    {run.error}
+                  </div>
+                ) : null}
+                {run.captions.length > 0 ? (
+                  <ul className="mt-3 space-y-2 text-sm text-zinc-800">
+                    {run.captions.map((caption, index) => (
+                      <li
+                        key={`${run.id}-caption-${index}`}
+                        className="rounded-lg border border-zinc-100 bg-white px-3 py-2"
+                      >
+                        {caption}
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
+
+      {selectedFlavorId ? (
+        <div className="text-sm text-zinc-600">
+          View full results in{" "}
+          <a
+            href={`/app/results?flavorId=${selectedFlavorId}`}
+            className="font-medium text-zinc-900 underline"
+          >
+            Results
+          </a>
+          .
+        </div>
+      ) : null}
     </div>
   );
 }

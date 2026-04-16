@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 
@@ -31,9 +32,13 @@ function formatDate(value: string | null) {
 }
 
 export default function ResultsClient({ flavors }: ResultsClientProps) {
+  const searchParams = useSearchParams();
+  const initialFlavorId = searchParams.get("flavorId");
   const [selectedFlavorId, setSelectedFlavorId] = useState<string>(
-    flavors[0]?.id ? String(flavors[0].id) : "",
+    initialFlavorId ?? (flavors[0]?.id ? String(flavors[0].id) : ""),
   );
+  const [searchText, setSearchText] = useState("");
+  const [sortMode, setSortMode] = useState<"newest" | "most-liked">("newest");
   const [captions, setCaptions] = useState<CaptionRow[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -54,14 +59,28 @@ export default function ResultsClient({ flavors }: ResultsClientProps) {
       setError(null);
 
       const supabase = createSupabaseBrowserClient();
-      const { data, error: queryError } = await supabase
+      let query = supabase
         .from("captions")
         .select(
           "id,content,image_id,created_datetime_utc,like_count,humor_flavor_id,images(url)",
         )
         .eq("humor_flavor_id", Number(selectedFlavorId))
-        .order("created_datetime_utc", { ascending: false })
         .limit(50);
+
+      if (searchText.trim()) {
+        query = query.ilike("content", `%${searchText.trim()}%`);
+      }
+
+      if (sortMode === "most-liked") {
+        query = query.order("like_count", {
+          ascending: false,
+          nullsFirst: false,
+        });
+      } else {
+        query = query.order("created_datetime_utc", { ascending: false });
+      }
+
+      const { data, error: queryError } = await query;
 
       if (queryError) {
         setError(queryError.message);
@@ -74,7 +93,7 @@ export default function ResultsClient({ flavors }: ResultsClientProps) {
     };
 
     fetchCaptions();
-  }, [selectedFlavorId]);
+  }, [selectedFlavorId, searchText, sortMode]);
 
   return (
     <div className="space-y-6">
@@ -85,22 +104,50 @@ export default function ResultsClient({ flavors }: ResultsClientProps) {
             Review generated captions by flavor.
           </p>
         </div>
-        <div className="min-w-[240px]">
-          <label className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
-            Humor flavor
-          </label>
-          <select
-            value={selectedFlavorId}
-            onChange={(event) => setSelectedFlavorId(event.target.value)}
-            className="mt-2 w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm text-zinc-900"
-          >
-            <option value="">Select flavor</option>
-            {flavors.map((flavor) => (
-              <option key={flavor.id} value={flavor.id}>
-                {flavor.slug}
-              </option>
-            ))}
-          </select>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+          <div className="min-w-[220px]">
+            <label className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+              Humor flavor
+            </label>
+            <select
+              value={selectedFlavorId}
+              onChange={(event) => setSelectedFlavorId(event.target.value)}
+              className="mt-2 w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm text-zinc-900"
+            >
+              <option value="">Select flavor</option>
+              {flavors.map((flavor) => (
+                <option key={flavor.id} value={flavor.id}>
+                  {flavor.slug}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="min-w-[220px]">
+            <label className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+              Search
+            </label>
+            <input
+              value={searchText}
+              onChange={(event) => setSearchText(event.target.value)}
+              placeholder="Search captions..."
+              className="mt-2 w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm text-zinc-900"
+            />
+          </div>
+          <div className="min-w-[180px]">
+            <label className="text-xs font-semibold uppercase tracking-wide text-zinc-500">
+              Sort
+            </label>
+            <select
+              value={sortMode}
+              onChange={(event) =>
+                setSortMode(event.target.value as "newest" | "most-liked")
+              }
+              className="mt-2 w-full rounded-lg border border-zinc-200 px-3 py-2 text-sm text-zinc-900"
+            >
+              <option value="newest">Newest</option>
+              <option value="most-liked">Most liked</option>
+            </select>
+          </div>
         </div>
       </div>
 
