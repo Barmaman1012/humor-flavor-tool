@@ -9,9 +9,9 @@ export type FlavorStep = {
   humor_flavor_id: number;
   order_by: number;
   description: string | null;
-  system_prompt: string | null;
-  user_prompt: string | null;
-  temperature: number | null;
+  llm_system_prompt: string | null;
+  llm_user_prompt: string | null;
+  llm_temperature: number | null;
   humor_flavor_step_type_id: number | null;
   llm_model_id: number | null;
   llm_input_type_id: number | null;
@@ -20,7 +20,10 @@ export type FlavorStep = {
 
 export type OptionItem = {
   id: number;
-  name: string | null;
+  name?: string | null;
+  slug?: string | null;
+  description?: string | null;
+  is_temperature_supported?: boolean | null;
 };
 
 type FlavorStepFormModalProps = {
@@ -67,11 +70,12 @@ export default function FlavorStepFormModal({
     }
 
     setDescription(initialStep?.description ?? "");
-    setSystemPrompt(initialStep?.system_prompt ?? "");
-    setUserPrompt(initialStep?.user_prompt ?? "");
+    setSystemPrompt(initialStep?.llm_system_prompt ?? "");
+    setUserPrompt(initialStep?.llm_user_prompt ?? "");
     setTemperature(
-      initialStep?.temperature !== null && initialStep?.temperature !== undefined
-        ? String(initialStep.temperature)
+      initialStep?.llm_temperature !== null &&
+        initialStep?.llm_temperature !== undefined
+        ? String(initialStep.llm_temperature)
         : "",
     );
     setStepTypeId(
@@ -97,6 +101,9 @@ export default function FlavorStepFormModal({
     [mode],
   );
 
+  const getLabel = (option: OptionItem) =>
+    option.slug ?? option.description ?? option.name ?? `Item ${option.id}`;
+
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
     setError(null);
@@ -119,9 +126,9 @@ export default function FlavorStepFormModal({
       humor_flavor_id: flavorId,
       order_by: orderBy,
       description: description.trim() || null,
-      system_prompt: systemPrompt.trim() || null,
-      user_prompt: userPrompt.trim() || null,
-      temperature: temperature ? Number(temperature) : null,
+      llm_system_prompt: systemPrompt.trim() || null,
+      llm_user_prompt: userPrompt.trim() || null,
+      llm_temperature: temperature ? Number(temperature) : null,
       humor_flavor_step_type_id: Number(stepTypeId),
       llm_model_id: Number(modelId),
       llm_input_type_id: Number(inputTypeId),
@@ -189,7 +196,7 @@ export default function FlavorStepFormModal({
                 <option value="">Select step type</option>
                 {stepTypes.map((type) => (
                   <option key={type.id} value={type.id}>
-                    {type.name ?? `Type ${type.id}`}
+                    {getLabel(type)}
                   </option>
                 ))}
               </select>
@@ -225,7 +232,7 @@ export default function FlavorStepFormModal({
                 <option value="">Select input type</option>
                 {inputTypes.map((type) => (
                   <option key={type.id} value={type.id}>
-                    {type.name ?? `Input ${type.id}`}
+                    {getLabel(type)}
                   </option>
                 ))}
               </select>
@@ -244,7 +251,7 @@ export default function FlavorStepFormModal({
                 <option value="">Select output type</option>
                 {outputTypes.map((type) => (
                   <option key={type.id} value={type.id}>
-                    {type.name ?? `Output ${type.id}`}
+                    {getLabel(type)}
                   </option>
                 ))}
               </select>
