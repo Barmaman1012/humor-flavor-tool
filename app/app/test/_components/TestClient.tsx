@@ -389,8 +389,7 @@ export default function TestClient({ flavors, images }: TestClientProps) {
 
             if (pollParsed.captions && pollParsed.captions.length > 0) {
               foundCaptions = normalizeCaptions(pollParsed.captions);
-              const resolvedCaptions = foundCaptions ?? [];
-              setCaptions((prev) => [...prev, ...resolvedCaptions]);
+              setCaptions((prev) => [...prev, ...foundCaptions]);
               setRuns((prev) =>
                 prev.map((run) =>
                   run.id === runId
