@@ -1,5 +1,4 @@
 import { redirect } from "next/navigation";
-import Link from "next/link";
 
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import AppShell from "../../_components/AppShell";
@@ -93,9 +92,9 @@ export default async function FlavorStepsPage({
                 {JSON.stringify(stepsError, null, 2)}
               </pre>
             </div>
-            <Link href="/app/flavors" className="inline-block underline">
+            <a href="/app/flavors" className="inline-block underline">
               Back to flavors
-            </Link>
+            </a>
           </div>
         </div>
       </AppShell>

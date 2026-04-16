@@ -1,21 +1,17 @@
 "use client";
 
-import { useSyncExternalStore } from "react";
+import { useEffect, useState } from "react";
 import { useTheme } from "next-themes";
 
 const MODES = ["system", "light", "dark"] as const;
 
-function useHydrated() {
-  return useSyncExternalStore(
-    () => () => {},
-    () => true,
-    () => false,
-  );
-}
-
 export default function ThemeToggle() {
   const { theme, setTheme, resolvedTheme } = useTheme();
-  const mounted = useHydrated();
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   if (!mounted) {
     return null;

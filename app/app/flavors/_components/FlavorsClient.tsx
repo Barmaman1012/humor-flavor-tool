@@ -49,17 +49,14 @@ export default function FlavorsClient({
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingFlavor, setEditingFlavor] = useState<Flavor | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [modalVersion, setModalVersion] = useState(0);
 
   const openCreate = () => {
     setEditingFlavor(null);
-    setModalVersion((value) => value + 1);
     setIsModalOpen(true);
   };
 
   const openEdit = (flavor: Flavor) => {
     setEditingFlavor(flavor);
-    setModalVersion((value) => value + 1);
     setIsModalOpen(true);
   };
 
@@ -189,7 +186,6 @@ export default function FlavorsClient({
       </div>
 
       <FlavorFormModal
-        key={`${editingFlavor ? `edit-${editingFlavor.id}` : "create"}-${modalVersion}`}
         open={isModalOpen}
         mode={editingFlavor ? "edit" : "create"}
         initialFlavor={editingFlavor}

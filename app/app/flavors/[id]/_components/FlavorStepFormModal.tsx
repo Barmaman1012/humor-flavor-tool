@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 
@@ -53,33 +53,48 @@ export default function FlavorStepFormModal({
   onClose,
   onSuccess,
 }: FlavorStepFormModalProps) {
-  const [description, setDescription] = useState(initialStep?.description ?? "");
-  const [systemPrompt, setSystemPrompt] = useState(
-    initialStep?.llm_system_prompt ?? "",
-  );
-  const [userPrompt, setUserPrompt] = useState(initialStep?.llm_user_prompt ?? "");
-  const [temperature, setTemperature] = useState<string>(
-    initialStep?.llm_temperature !== null &&
-      initialStep?.llm_temperature !== undefined
-      ? String(initialStep.llm_temperature)
-      : "",
-  );
-  const [stepTypeId, setStepTypeId] = useState<string>(
-    initialStep?.humor_flavor_step_type_id
-      ? String(initialStep.humor_flavor_step_type_id)
-      : "",
-  );
-  const [modelId, setModelId] = useState<string>(
-    initialStep?.llm_model_id ? String(initialStep.llm_model_id) : "",
-  );
-  const [inputTypeId, setInputTypeId] = useState<string>(
-    initialStep?.llm_input_type_id ? String(initialStep.llm_input_type_id) : "",
-  );
-  const [outputTypeId, setOutputTypeId] = useState<string>(
-    initialStep?.llm_output_type_id ? String(initialStep.llm_output_type_id) : "",
-  );
+  const [description, setDescription] = useState("");
+  const [systemPrompt, setSystemPrompt] = useState("");
+  const [userPrompt, setUserPrompt] = useState("");
+  const [temperature, setTemperature] = useState<string>("");
+  const [stepTypeId, setStepTypeId] = useState<string>("");
+  const [modelId, setModelId] = useState<string>("");
+  const [inputTypeId, setInputTypeId] = useState<string>("");
+  const [outputTypeId, setOutputTypeId] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+
+    setDescription(initialStep?.description ?? "");
+    setSystemPrompt(initialStep?.llm_system_prompt ?? "");
+    setUserPrompt(initialStep?.llm_user_prompt ?? "");
+    setTemperature(
+      initialStep?.llm_temperature !== null &&
+        initialStep?.llm_temperature !== undefined
+        ? String(initialStep.llm_temperature)
+        : "",
+    );
+    setStepTypeId(
+      initialStep?.humor_flavor_step_type_id
+        ? String(initialStep.humor_flavor_step_type_id)
+        : "",
+    );
+    setModelId(initialStep?.llm_model_id ? String(initialStep.llm_model_id) : "");
+    setInputTypeId(
+      initialStep?.llm_input_type_id ? String(initialStep.llm_input_type_id) : "",
+    );
+    setOutputTypeId(
+      initialStep?.llm_output_type_id
+        ? String(initialStep.llm_output_type_id)
+        : "",
+    );
+    setError(null);
+    setIsSaving(false);
+  }, [open, initialStep]);
 
   const title = useMemo(
     () => (mode === "create" ? "Add Step" : "Edit Step"),

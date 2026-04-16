@@ -31,6 +31,12 @@ type TestClientProps = {
   images: ImageOption[];
 };
 
+type CaptionResponse = {
+  captions?: string[];
+  data?: { captions?: string[] };
+  result?: { captions?: string[] };
+};
+
 type DebugStep = {
   step: string;
   status?: number;
@@ -62,6 +68,12 @@ async function getAccessToken() {
     throw new Error("No active session. Please sign in again.");
   }
   return data.session.access_token;
+}
+
+function getCaptions(payload: CaptionResponse) {
+  return (
+    payload.captions ?? payload.data?.captions ?? payload.result?.captions ?? []
+  );
 }
 
 async function checkPublicUrl(url: string) {

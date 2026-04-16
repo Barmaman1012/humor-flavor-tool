@@ -1,5 +1,4 @@
 import { redirect } from "next/navigation";
-import Link from "next/link";
 
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import AppShell from "../../../_components/AppShell";
@@ -38,13 +37,16 @@ export default async function FlavorResultsPage({
       <div className="space-y-6">
         <div className="space-y-2">
           <div className="text-sm text-zinc-500">
-            <Link href="/app/flavors" className="hover:underline">
+            <a href="/app/flavors" className="hover:underline">
               Flavors
-            </Link>
+            </a>
             <span className="px-2">/</span>
-            <Link href={`/app/flavors/${numericId}`} className="hover:underline">
+            <a
+              href={`/app/flavors/${numericId}`}
+              className="hover:underline"
+            >
               {flavor?.slug ?? "Flavor"}
-            </Link>
+            </a>
             <span className="px-2">/</span>
             <span>Results</span>
           </div>
